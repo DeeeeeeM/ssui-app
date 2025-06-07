@@ -8,41 +8,51 @@ from stable_whisper.text_output import result_to_any, sec2srt
 import tempfile
 import re
 import textwrap
+import torch
 
+# --- Main function to process the media file --- #
 def process_media(
     model_size, source_lang, upload, model_type,
     max_chars, max_words, extend_in, extend_out, collapse_gaps,
     max_lines_per_segment, line_penalty, longest_line_char_penalty, *args
 ):
+    # ----- is file empty? checker ----- #
     if upload is None:
-        return None, None, None, None, "No file uploaded."
+        return None, None, None, None 
 
     temp_path = upload.name
     base_path = os.path.splitext(temp_path)[0]
     word_transcription_path = base_path + '.json'
 
+    # ---- Load .json or transcribe ---- #
     if os.path.exists(word_transcription_path):
         print(f"Transcription data file found at {word_transcription_path}")
         result = stable_whisper.WhisperResult(word_transcription_path)
     else:
         print(f"Can't find transcription data file at {word_transcription_path}. Starting transcribing ...")
+
+        #-- Check if CUDA is available or not --#
         if model_type == "faster whisper":
-            model = stable_whisper.load_faster_whisper(model_size, device="cuda")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model = stable_whisper.load_faster_whisper(model_size, device=device)
         else:
-            model = stable_whisper.load_model(model_size, device="cuda")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model = stable_whisper.load_model(model_size, device=device)
+
         try:
             result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, denoiser="demucs")
         except Exception as e:
-            return None, None, None, None, f"Transcription failed: {e}"
+            return None, None, None, None  # Remove the 5th value
         result.save_as_json(word_transcription_path)
 
+    # ADVANCED SETTINGS #
     if max_chars or max_words:
         result.split_by_length(
             max_chars=int(max_chars) if max_chars else None,
             max_words=int(max_words) if max_words else None
         )
 
-    # ----- Perform segment time extensions and anti-flickering (=closing the gaps) -----
+    # ----- Anti-flickering ----- #
     extend_start = float(extend_in) if extend_in else 0.0
     extend_end = float(extend_out) if extend_out else 0.0
     collapse_gaps_under = float(collapse_gaps) if collapse_gaps else 0.0
@@ -52,12 +62,10 @@ def process_media(
         next = result[i+1]
 
         if next.start - cur.end < extend_start + extend_end:
-            # Not enough time to add the entire desired extensions -> add proportionally
             k = extend_end / (extend_start + extend_end) if (extend_start + extend_end) > 0 else 0
             mid = cur.end * (1 - k) + next.start * k
             cur.end = next.start = mid
         else:
-            # Add full desired extensions
             cur.end += extend_end
             next.start -= extend_start
 
@@ -68,16 +76,11 @@ def process_media(
         result[0].start = max(0, result[0].start - extend_start)
         result[-1].end += extend_end
 
-    #for seg in result:
-    #    seg.text = optimize_text(
-    #        seg.text,
-    #        int(max_lines_per_segment) if max_lines_per_segment else 3,
-    #        float(line_penalty) if line_penalty else 22.01,
-    #        float(longest_line_char_penalty) if longest_line_char_penalty else 1.0
-    #    )
+    # --- Custom SRT block output --- #
+    original_filename = os.path.splitext(os.path.basename(temp_path))[0]
+    srt_dir = tempfile.gettempdir()
+    subtitles_path = os.path.join(srt_dir, f"{original_filename}.srt")
 
-    # Use custom SRT block output
-    subtitles_path = tempfile.NamedTemporaryFile(delete=False, suffix=".srt", mode="w", encoding="utf-8").name
     result_to_any(
         result=result,
         filepath=subtitles_path,
@@ -91,23 +94,21 @@ def process_media(
         word_level=False,
     )
     srt_file_path = subtitles_path
-
     transcript_txt = result.to_txt()
 
     mime, _ = mimetypes.guess_type(temp_path)
     audio_out = temp_path if mime and mime.startswith("audio") else None
     video_out = temp_path if mime and mime.startswith("video") else None
 
-    return audio_out, video_out, transcript_txt, srt_file_path, None
+    return audio_out, video_out, transcript_txt, srt_file_path  # Only 4 values
 
 def optimize_text(text, max_lines_per_segment, line_penalty, longest_line_char_penalty):
     text = text.strip()
     words = text.split()
 
-    # Compute prefix sums
     psum = [0]
     for w in words:
-        psum += [psum[-1] + len(w) + 1]  # +1 because of spaces
+        psum += [psum[-1] + len(w) + 1]  
 
     bestScore = 10 ** 30
     bestSplit = None
@@ -290,7 +291,7 @@ with gr.Blocks() as interface:
                         source_lang = gr.Dropdown(
                             choices=WHISPER_LANGUAGES,
                             label="Source Language",
-                            value="en",  # default to English
+                            value="tl",  # default to Tagalog
                             interactive=True
                         )
                         model_type = gr.Dropdown(
