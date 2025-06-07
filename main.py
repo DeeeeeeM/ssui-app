@@ -9,35 +9,89 @@ import tempfile
 import re
 import textwrap
 
-def process_media(model_size, source_lang, upload, model_type):
+def process_media(
+    model_size, source_lang, upload, model_type,
+    max_chars, max_words, extend_in, extend_out, collapse_gaps,
+    max_lines_per_segment, line_penalty, longest_line_char_penalty, *args
+):
     if upload is None:
         return None, None, None, None, "No file uploaded."
 
     temp_path = upload.name
+    base_path = os.path.splitext(temp_path)[0]
+    word_transcription_path = base_path + '.json'
 
-    if model_type == "faster whisper":
-        model = stable_whisper.load_faster_whisper(model_size, device="cuda")
+    if os.path.exists(word_transcription_path):
+        print(f"Transcription data file found at {word_transcription_path}")
+        result = stable_whisper.WhisperResult(word_transcription_path)
     else:
-        model = stable_whisper.load_model(model_size, device="cuda")
+        print(f"Can't find transcription data file at {word_transcription_path}. Starting transcribing ...")
+        if model_type == "faster whisper":
+            model = stable_whisper.load_faster_whisper(model_size, device="cuda")
+        else:
+            model = stable_whisper.load_model(model_size, device="cuda")
+        try:
+            result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, denoiser="demucs")
+        except Exception as e:
+            return None, None, None, None, f"Transcription failed: {e}"
+        result.save_as_json(word_transcription_path)
 
-    try:
-        result = model.transcribe(temp_path, language=source_lang, vad=False, regroup=False)
-    except Exception as e:
-        return None, None, None, None, f"Transcription failed: {e}"
+    if max_chars or max_words:
+        result.split_by_length(
+            max_chars=int(max_chars) if max_chars else None,
+            max_words=int(max_words) if max_words else None
+        )
 
-    for i, segment in enumerate(result):
-        if i+1 == len(result):
-            break
-        next_start = result[i+1].start
-        if next_start - segment.end <= 0.100:
-            segment.end = next_start
+    # ----- Perform segment time extensions and anti-flickering (=closing the gaps) -----
+    extend_start = float(extend_in) if extend_in else 0.0
+    extend_end = float(extend_out) if extend_out else 0.0
+    collapse_gaps_under = float(collapse_gaps) if collapse_gaps else 0.0
 
-    srt_file = tempfile.NamedTemporaryFile(delete=False, suffix=".srt", mode="w", encoding="utf-8")
-    result.to_srt_vtt(srt_file.name, word_level=False)
-    srt_file.close()
-    srt_file_path = srt_file.name
+    for i in range(len(result) - 1):
+        cur = result[i]
+        next = result[i+1]
 
-    # Transcript as plain text
+        if next.start - cur.end < extend_start + extend_end:
+            # Not enough time to add the entire desired extensions -> add proportionally
+            k = extend_end / (extend_start + extend_end) if (extend_start + extend_end) > 0 else 0
+            mid = cur.end * (1 - k) + next.start * k
+            cur.end = next.start = mid
+        else:
+            # Add full desired extensions
+            cur.end += extend_end
+            next.start -= extend_start
+
+            if next.start - cur.end <= collapse_gaps_under:
+                cur.end = next.start = (cur.end + next.start) / 2
+
+    if result:
+        result[0].start = max(0, result[0].start - extend_start)
+        result[-1].end += extend_end
+
+    #for seg in result:
+    #    seg.text = optimize_text(
+    #        seg.text,
+    #        int(max_lines_per_segment) if max_lines_per_segment else 3,
+    #        float(line_penalty) if line_penalty else 22.01,
+    #        float(longest_line_char_penalty) if longest_line_char_penalty else 1.0
+    #    )
+
+    # Use custom SRT block output
+    subtitles_path = tempfile.NamedTemporaryFile(delete=False, suffix=".srt", mode="w", encoding="utf-8").name
+    result_to_any(
+        result=result,
+        filepath=subtitles_path,
+        filetype='srt',
+        segments2blocks=lambda segments: segments2blocks(
+            segments,
+            int(max_lines_per_segment) if max_lines_per_segment else 3,
+            float(line_penalty) if line_penalty else 22.01,
+            float(longest_line_char_penalty) if longest_line_char_penalty else 1.0
+        ),
+        word_level=False,
+    )
+    srt_file_path = subtitles_path
+
     transcript_txt = result.to_txt()
 
     mime, _ = mimetypes.guess_type(temp_path)
@@ -45,7 +99,59 @@ def process_media(model_size, source_lang, upload, model_type):
     video_out = temp_path if mime and mime.startswith("video") else None
 
     return audio_out, video_out, transcript_txt, srt_file_path, None
-    
+
+def optimize_text(text, max_lines_per_segment, line_penalty, longest_line_char_penalty):
+    text = text.strip()
+    words = text.split()
+
+    # Compute prefix sums
+    psum = [0]
+    for w in words:
+        psum += [psum[-1] + len(w) + 1]  # +1 because of spaces
+
+    bestScore = 10 ** 30
+    bestSplit = None
+
+    def backtrack(level, wordsUsed, maxLineLength, split):
+        nonlocal bestScore, bestSplit
+
+        if wordsUsed == len(words):
+            score = level * line_penalty + maxLineLength * longest_line_char_penalty
+            if score < bestScore:
+                bestScore = score
+                bestSplit = split
+            return
+
+        if level + 1 == max_lines_per_segment:
+            backtrack(
+                level + 1, len(words),
+                max(maxLineLength, psum[len(words)] - psum[wordsUsed] - 1),
+                split + [words[wordsUsed:]]
+            )
+            return
+
+        for levelWords in range(1, len(words) - wordsUsed + 1):
+            backtrack(
+                level + 1, wordsUsed + levelWords,
+                max(maxLineLength, psum[wordsUsed + levelWords] - psum[wordsUsed] - 1),
+                split + [words[wordsUsed:wordsUsed + levelWords]]
+            )
+
+    backtrack(0, 0, 0, [])
+
+    optimized = '\n'.join(' '.join(words) for words in bestSplit)
+    return optimized
+
+def segment2optimizedsrtblock(segment: dict, idx: int, max_lines_per_segment, line_penalty, longest_line_char_penalty, strip=True) -> str:
+    return f'{idx}\n{sec2srt(segment["start"])} --> {sec2srt(segment["end"])}\n' \
+           f'{optimize_text(segment["text"], max_lines_per_segment, line_penalty, longest_line_char_penalty)}'
+
+def segments2blocks(segments, max_lines_per_segment, line_penalty, longest_line_char_penalty):
+    return '\n\n'.join(
+        segment2optimizedsrtblock(s, i, max_lines_per_segment, line_penalty, longest_line_char_penalty, strip=True)
+        for i, s in enumerate(segments)
+    )
+
 WHISPER_LANGUAGES = [
     ("Afrikaans", "af"),
     ("Albanian", "sq"),
@@ -290,7 +396,11 @@ with gr.Blocks() as interface:
 
             submit_btn.click(
                 fn=process_media,
-                inputs=[model_size, source_lang, file_input, model_type],
+                inputs=[
+                    model_size, source_lang, file_input, model_type,
+                    max_chars, max_words, extend_in, extend_out, collapse_gaps,
+                    max_lines_per_segment, line_penalty, longest_line_char_penalty
+                ],
                 outputs=[audio_output, video_output, transcript_output, srt_output]
             )
 
