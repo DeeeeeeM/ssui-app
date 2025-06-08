@@ -1,14 +1,11 @@
-import gradio as gr 
-import mimetypes
 import os 
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
-import argparse
+import tempfile
+import mimetypes
+import gradio as gr 
+import torch
 import stable_whisper
 from stable_whisper.text_output import result_to_any, sec2srt
-import tempfile
-import re
-import textwrap
-import torch
 
 def process_media(
     model_size, source_lang, upload, model_type,
@@ -20,30 +17,21 @@ def process_media(
         return None, None, None, None 
 
     temp_path = upload.name
-    base_path = os.path.splitext(temp_path)[0]
-    word_transcription_path = base_path + '.json'
 
-    # ---- Load .json or transcribe ---- #
-    if os.path.exists(word_transcription_path):
-        print(f"Transcription data file found at {word_transcription_path}")
-        result = stable_whisper.WhisperResult(word_transcription_path)
+    #-- Check if CUDA is available or not --#
+    if model_type == "faster whisper":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = stable_whisper.load_faster_whisper(model_size, device=device)
     else:
-        print(f"Can't find transcription data file at {word_transcription_path}. Starting transcribing ...")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = stable_whisper.load_model(model_size, device=device)
 
-        #-- Check if CUDA is available or not --#
-        if model_type == "faster whisper":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            model = stable_whisper.load_faster_whisper(model_size, device=device)
-        else:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            model = stable_whisper.load_model(model_size, device=device)
-
-        try:
-            result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, denoiser="demucs")
-        except Exception as e:
-            return None, None, None, None  # Remove the 5th value
-        result.save_as_json(word_transcription_path)
-
+    try:
+        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, denoiser="demucs")
+        #result.save_as_json(word_transcription_path)
+    except Exception as e:
+        return None, None, None, None 
+    
     # ADVANCED SETTINGS #
     if max_chars or max_words:
         result.split_by_length(
@@ -99,7 +87,7 @@ def process_media(
     audio_out = temp_path if mime and mime.startswith("audio") else None
     video_out = temp_path if mime and mime.startswith("video") else None
 
-    return audio_out, video_out, transcript_txt, srt_file_path  # Only 4 values
+    return audio_out, video_out, transcript_txt, srt_file_path
 
 def optimize_text(text, max_lines_per_segment, line_penalty, longest_line_char_penalty):
     text = text.strip()
@@ -257,7 +245,8 @@ with gr.Blocks() as interface:
         """
         <style>.html-container.svelte-phx28p.padding { padding: 0 !important; }</style>
         <div class='custom-container'>
-        <h1 style='text-align: left;'>Speech Solutions</h1>
+        <h1 style='text-align: left;'>Speech Solutions✨</h1>
+        <p style='text-align: left;'>Hosted on 🤗 <b>Hugging Face Spaces</b></p>
         """
     )
     gr.Markdown(
@@ -266,8 +255,8 @@ with gr.Blocks() as interface:
 
     - Speech-to-text (WhisperAI)
     - Language translation (GPT-4) (In progress)
-    - Youtube video / playlist integration (In progress)
-    - Batched processing (In progress)
+    - Improved transcription (GPT-4) (In progress)
+    - Text to Speech (In progress)
 
     <b>NOTE: This app is currently in the process of applying other AI-solutions for other use cases.</b>
     """
@@ -292,7 +281,7 @@ with gr.Blocks() as interface:
                         source_lang = gr.Dropdown(
                             choices=WHISPER_LANGUAGES,
                             label="Source Language",
-                            value="tl",  # default to Tagalog
+                            value="tl",  
                             interactive=True
                         )
                         model_type = gr.Dropdown(
@@ -320,6 +309,7 @@ with gr.Blocks() as interface:
             with gr.Accordion("Advanced Settings", open=False):
                 gr.Markdown(
                     """ 
+
                     These settings allow you to customize the segmentation of the audio or video file. Adjust these parameters to control how the segments are created based on characters, words, and lines.
 
                     <b><i>Note: The values currently set are the default values. You can adjust them to your needs, but be aware that changing these values may affect the segmentation of the audio or video file.</i></b>
@@ -386,7 +376,7 @@ with gr.Blocks() as interface:
                             precision=2,
                             interactive=True
                         )
-            submit_btn = gr.Button("PROCESS", elem_id="orange-process-btn")            
+            submit_btn = gr.Button("- PROCESS -")            
             with gr.Row(): 
                 with gr.Column():
                     transcript_output = gr.Textbox(label="Transcript", lines=8, interactive=False)
