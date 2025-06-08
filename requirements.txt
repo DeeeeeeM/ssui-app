@@ -2,9 +2,4 @@ gradio>=3.0.0
 stable-ts
 stable-ts[fw]
 demucs
-
---extra-index-url https://download.pytorch.org/whl/cu124; sys_platform != "darwin"
-torch==2.1.2+cu124; sys_platform != "darwin"
-torchvision==0.16.2+cu124; sys_platform != "darwin"
-torch; sys_platform == "darwin"
-torchvision; sys_platform == "darwin"
+torch==2.1.2
