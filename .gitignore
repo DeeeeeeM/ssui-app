@@ -1,4 +1,6 @@
 .gradio/
 .github/
-README.md
+.github/workflows/check_file_size.yml
+.github/workflows/sync_to_hf_hub.yml
 requirements.txt
+README.md
