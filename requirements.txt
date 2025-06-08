@@ -1,0 +1,6 @@
+gradio>=3.0.0
+stable-ts
+stable-ts[fw]
+demucs
+torch==2.1.2
+numpy<2
