@@ -262,7 +262,7 @@ with gr.Blocks() as interface:
     )
     gr.Markdown(
     """
-    This is a simple Gradio UI app that combines AI-powered speech and language processing technologies. This app supports the following features:
+    This is a Gradio UI app that combines AI-powered speech and language processing technologies. This app supports the following features:
 
     - Speech-to-text (WhisperAI)
     - Language translation (GPT-4) (In progress)
