@@ -1,1 +1,4 @@
 .gradio/
+.github/
+README.md
+requirements.txt
