@@ -10,7 +10,6 @@ import re
 import textwrap
 import torch
 
-# --- Main function to process the media file --- #
 def process_media(
     model_size, source_lang, upload, model_type,
     max_chars, max_words, extend_in, extend_out, collapse_gaps,
