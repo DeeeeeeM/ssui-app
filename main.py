@@ -266,6 +266,8 @@ with gr.Blocks() as interface:
 
     - Speech-to-text (WhisperAI)
     - Language translation (GPT-4) (In progress)
+    - Youtube video / playlist integration (In progress)
+    - Batched processing (In progress)
 
     <b>NOTE: This app is currently in the process of applying other AI-solutions for other use cases.</b>
     """
