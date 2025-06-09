@@ -258,16 +258,20 @@ with gr.Blocks() as interface:
     - Improved transcription (GPT-4) (In progress)
     - Text to Speech (In progress)
 
-    <b>NOTE: This app is currently in the process of applying other AI-solutions for other use cases.</b>
+    <i><b>NOTE: This app is currently in the process of applying other AI-solutions for other use cases.</b></i>
     """
     )
 
     with gr.Tabs():
         with gr.TabItem("Speech to Text"):
-            gr.HTML("<h2 style='text-align: left;'>OpenAI/Whisper + stable-ts</h1>")
+            gr.HTML("<h2 style='text-align: left;'>OpenAI / Whisper + stable-ts</h2>")
             gr.Markdown(
             """ 
             Open Ai's <b>Whisper</b> is a versatile speech recognition model trained on diverse audio for tasks like multilingual transcription, translation, and language ID. With the help of <b>stable-ts</b>, it provides accurate word-level timestamps in chronological order without extra processing.
+
+            <i>Note: The default values are set for balanced and faster processing, 
+            you can choose: large, large v2, and large v3 <b>MODEL SIZE</b> for more accuracy, but they may take longer to process.</i>
+
             """
             )
             #General Settings
@@ -292,19 +296,20 @@ with gr.Blocks() as interface:
                         )
                         model_size = gr.Dropdown(
                             choices=[
-                                ("Large v3 Turbo", "large-v3-turbo"),
-                                ("Large v3", "large-v3"),
-                                ("Large v2", "large-v2"),
-                                ("Large", "large"),
-                                ("Medium", "medium"),
-                                ("Small", "small"),
-                                ("Base", "base"),
-                                ("Tiny", "tiny")
+                                "large-v3-turbo",
+                                "large-v3",
+                                "large-v2",
+                                "large",
+                                "medium",
+                                "small",
+                                "base",
+                                "tiny"
                             ],
                             label="Model Size",
                             value="large-v2",
                             interactive=True
                         )
+
             #Advanced Settings
             with gr.Accordion("Advanced Settings", open=False):
                 gr.Markdown(
