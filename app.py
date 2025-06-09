@@ -6,12 +6,15 @@ import gradio as gr
 import torch
 import stable_whisper
 from stable_whisper.text_output import result_to_any, sec2srt
+import time
 
 def process_media(
     model_size, source_lang, upload, model_type,
     max_chars, max_words, extend_in, extend_out, collapse_gaps,
     max_lines_per_segment, line_penalty, longest_line_char_penalty, *args
 ):
+    start_time = time.time()
+
     # ----- is file empty? checker ----- #
     if upload is None:
         return None, None, None, None 
@@ -27,7 +30,8 @@ def process_media(
         model = stable_whisper.load_model(model_size, device=device)
 
     try:
-        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, denoiser="demucs", no_speech_threshold=0.9)
+        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, no_speech_threshold=0.9)
+        #remove background music/noise: denoiser="demucs"
         #result.save_as_json(word_transcription_path)
     except Exception as e:
         return None, None, None, None 
@@ -86,6 +90,9 @@ def process_media(
     mime, _ = mimetypes.guess_type(temp_path)
     audio_out = temp_path if mime and mime.startswith("audio") else None
     video_out = temp_path if mime and mime.startswith("video") else None
+
+    elapsed = time.time() - start_time 
+    print(f"process_media completed in {elapsed:.2f} seconds")
 
     return audio_out, video_out, transcript_txt, srt_file_path
 
@@ -300,7 +307,7 @@ with gr.Blocks() as interface:
                         )
                         model_size = gr.Dropdown(
                             choices=[
-                                "large-v3-turbo",
+                                "deepdml/faster-whisper-large-v3-turbo-ct2",
                                 "large-v3",
                                 "large-v2",
                                 "large",
