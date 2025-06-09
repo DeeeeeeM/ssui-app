@@ -30,7 +30,7 @@ def process_media(
         model = stable_whisper.load_model(model_size, device=device)
 
     try:
-        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, no_speech_threshold=0.9)
+        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, no_speech_threshold=0.9, denoiser="demucs")
         #remove background music/noise: denoiser="demucs"
         #result.save_as_json(word_transcription_path)
     except Exception as e:
@@ -317,7 +317,7 @@ with gr.Blocks() as interface:
                                 "tiny"
                             ],
                             label="Model Size",
-                            value="large-v2",
+                            value="deepdml/faster-whisper-large-v3-turbo-ct2",
                             interactive=True
                         )
 
