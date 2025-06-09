@@ -27,7 +27,7 @@ def process_media(
         model = stable_whisper.load_model(model_size, device=device)
 
     try:
-        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, denoiser="demucs")
+        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, denoiser="demucs", no_speech_threshold=0.9)
         #result.save_as_json(word_transcription_path)
     except Exception as e:
         return None, None, None, None 
@@ -246,7 +246,11 @@ with gr.Blocks() as interface:
         <style>.html-container.svelte-phx28p.padding { padding: 0 !important; }</style>
         <div class='custom-container'>
         <h1 style='text-align: left;'>Speech Solutions✨</h1>
-        <p style='text-align: left;'>Hosted on 🤗 <b>Hugging Face Spaces</b></p>
+        <p style='text-align: left;'> Hosted on 🤗
+            <a href="https://huggingface.co/spaces/DeeeeeM/ssui-app" target="_blank">
+                <b>Hugging Face Spaces</b>
+            </a>
+        </p>
         """
     )
     gr.Markdown(
