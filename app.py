@@ -30,8 +30,7 @@ def process_media(
         model = stable_whisper.load_model(model_size, device=device)
 
     try:
-        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, no_speech_threshold=0.9, denoiser="demucs")
-        #remove background music/noise: denoiser="demucs"
+        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, no_speech_threshold=0.9, denoiser="demucs", batch_size=16)
         #result.save_as_json(word_transcription_path)
     except Exception as e:
         return None, None, None, None 
@@ -297,7 +296,8 @@ with gr.Blocks() as interface:
                             choices=WHISPER_LANGUAGES,
                             label="Source Language",
                             value="tl",  
-                            interactive=True
+                            interactive=True,
+                            allow_custom_value=False
                         )
                         model_type = gr.Dropdown(
                             choices=["faster whisper", "whisper"],
