@@ -25,16 +25,14 @@ def process_media(
     if model_type == "faster whisper":
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = stable_whisper.load_faster_whisper(model_size, device=device)
+        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, no_speech_threshold=0.9, denoiser="demucs")
     else:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = stable_whisper.load_model(model_size, device=device)
+        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, no_speech_threshold=0.9, denoiser="demucs")
+    #, batch_size=16
+    #result.save_as_json(word_transcription_path) 
 
-    try:
-        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, no_speech_threshold=0.9, denoiser="demucs", batch_size=16)
-        #result.save_as_json(word_transcription_path)
-    except Exception as e:
-        return None, None, None, None 
-    
     # ADVANCED SETTINGS #
     if max_chars or max_words:
         result.split_by_length(

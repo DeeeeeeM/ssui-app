@@ -3,5 +3,6 @@ stable-ts
 stable-ts[fw]
 demucs
 torch==2.6.0
-numpy<2
+numpy>=1.24,<2.3
+sympy==1.13.1
 chardet

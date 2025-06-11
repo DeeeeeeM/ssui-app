@@ -1,0 +1,8 @@
+gradio
+stable-ts
+stable-ts[fw]
+torch==2.6.0+cu124
+numpy<2.3,>=1.24
+sympy==1.13.1
+demucs
+chardet
