@@ -11,11 +11,15 @@ import time
 def process_media(
     model_size, source_lang, upload, model_type,
     max_chars, max_words, extend_in, extend_out, collapse_gaps,
-    max_lines_per_segment, line_penalty, longest_line_char_penalty, *args
+    max_lines_per_segment, line_penalty, longest_line_char_penalty,
+    initial_prompt=None,  #
+    *args
 ):
+    if not initial_prompt:
+        initial_prompt = None 
+
     start_time = time.time()
 
-    # ----- is file empty? checker ----- #
     if upload is None:
         return None, None, None, None 
 
@@ -25,11 +29,26 @@ def process_media(
     if model_type == "faster whisper":
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = stable_whisper.load_faster_whisper(model_size, device=device)
-        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False,no_speech_threshold=0.9)
+        result = model.transcribe(
+            temp_path,
+            language=source_lang,
+            vad=True,
+            regroup=False,
+            no_speech_threshold=0.9,
+            initial_prompt=initial_prompt  # <-- pass here
+        )
     else:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = stable_whisper.load_model(model_size, device=device)
-        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, no_speech_threshold=0.9, denoiser="demucs")
+        result = model.transcribe(
+            temp_path,
+            language=source_lang,
+            vad=True,
+            regroup=False,
+            no_speech_threshold=0.9,
+            denoiser="demucs",
+            initial_prompt=initial_prompt  # <-- pass here
+        )
     #, batch_size=16, denoiser="demucs"
     #result.save_as_json(word_transcription_path) 
 
@@ -299,9 +318,8 @@ with gr.Blocks() as interface:
                         source_lang = gr.Dropdown(
                             choices=WHISPER_LANGUAGES,
                             label="Source Language",
-                            value="tl",  
-                            interactive=True,
-                            allow_custom_value=False
+                            value="tl",
+                            interactive=True
                         )
                         model_type = gr.Dropdown(
                             choices=["faster whisper", "whisper"],
@@ -322,6 +340,12 @@ with gr.Blocks() as interface:
                             ],
                             label="Model Size",
                             value="deepdml/faster-whisper-large-v3-turbo-ct2",
+                            interactive=True
+                        )
+                        initial_prompt = gr.Textbox(
+                            label="Initial Prompt (optional)",
+                            lines=3,
+                            placeholder="Add context, names, or style for the model here",
                             interactive=True
                         )
 
