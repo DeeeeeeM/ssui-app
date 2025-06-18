@@ -25,12 +25,12 @@ def process_media(
     if model_type == "faster whisper":
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = stable_whisper.load_faster_whisper(model_size, device=device)
-        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, no_speech_threshold=0.9, denoiser="demucs")
+        result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False,no_speech_threshold=0.9)
     else:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = stable_whisper.load_model(model_size, device=device)
         result = model.transcribe(temp_path, language=source_lang, vad=True, regroup=False, no_speech_threshold=0.9, denoiser="demucs")
-    #, batch_size=16
+    #, batch_size=16, denoiser="demucs"
     #result.save_as_json(word_transcription_path) 
 
     # ADVANCED SETTINGS #
@@ -130,6 +130,12 @@ def optimize_text(text, max_lines_per_segment, line_penalty, longest_line_char_p
             )
 
     backtrack(0, 0, 0, [])
+
+    if not bestSplit:
+        return text
+        
+    if len(bestSplit) > max_lines_per_segment or any(len(line) == 1 for line in bestSplit):
+        return text
 
     optimized = '\n'.join(' '.join(words) for words in bestSplit)
     return optimized
