@@ -7,6 +7,9 @@ import torch
 import stable_whisper
 from stable_whisper.text_output import result_to_any, sec2srt
 import time
+from yt_dlp import YoutubeDL
+import csv
+import os
 
 def process_media(
     model_size, source_lang, upload, model_type,
@@ -168,6 +171,31 @@ def segments2blocks(segments, max_lines_per_segment, line_penalty, longest_line_
         segment2optimizedsrtblock(s, i, max_lines_per_segment, line_penalty, longest_line_char_penalty, strip=True)
         for i, s in enumerate(segments)
     )
+
+def extract_playlist_to_csv(playlist_url):
+    ydl_opts = {
+        'extract_flat': True,
+        'quiet': True,
+        'dump_single_json': True
+    }
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            result = ydl.extract_info(playlist_url, download=False)
+            entries = result.get('entries', [])
+            # Save to a temp file for download
+            fd, csv_path = tempfile.mkstemp(suffix=".csv", text=True)
+            os.close(fd)
+            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Title', 'Video ID', 'URL'])
+                for video in entries:
+                    title = video.get('title', 'N/A')
+                    video_id = video['id']
+                    url = f'https://www.youtube.com/watch?v={video_id}'
+                    writer.writerow([title, video_id, url])
+        return csv_path
+    except Exception as e:
+        return None
 
 WHISPER_LANGUAGES = [
     ("Afrikaans", "af"),
@@ -440,7 +468,16 @@ with gr.Blocks() as interface:
                 outputs=[audio_output, video_output, transcript_output, srt_output]
             )
 
-        with gr.TabItem("..."):
-            pass
+        with gr.TabItem("Youtube playlist extractor"):
+            gr.Markdown("### Extract YT Title, URL, and ID from a YouTube playlist and download as CSV.")
+            playlist_url = gr.Textbox(label="YouTube Playlist URL", placeholder="Paste playlist URL here")
+            process_btn = gr.Button("Process")
+            csv_output = gr.File(label="Download CSV")
+            process_btn.click(
+                extract_playlist_to_csv,
+                inputs=playlist_url,
+                outputs=csv_output
+            )
+
 
 interface.launch(share=True)
