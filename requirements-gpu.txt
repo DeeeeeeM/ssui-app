@@ -6,3 +6,4 @@ numpy<2.3,>=1.24
 sympy==1.13.1
 demucs
 chardet
+yt-dlp
