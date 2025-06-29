@@ -10,6 +10,9 @@ import time
 from yt_dlp import YoutubeDL
 import csv
 import os
+import subprocess
+import glob
+import shutil
 
 def process_media(
     model_size, source_lang, upload, model_type,
@@ -195,6 +198,35 @@ def extract_playlist_to_csv(playlist_url):
                     writer.writerow([title, video_id, url])
         return csv_path
     except Exception as e:
+        return None
+
+def download_srt(video_url):
+    try:
+        temp_dir = tempfile.mkdtemp()
+        output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
+        cmd = [
+            "yt-dlp",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-lang", "en-US",
+            "--skip-download",
+            "--convert-subs", "srt",
+            "-o", output_template,
+            video_url
+        ]
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print(result.stdout)
+        print(result.stderr)
+        srt_files = glob.glob(os.path.join(temp_dir, "*.srt"))
+        if srt_files:
+            return srt_files[0]
+        else:
+            vtt_files = glob.glob(os.path.join(temp_dir, "*.vtt"))
+            if vtt_files:
+                return vtt_files[0]
+            return None
+    except Exception as e:
+        print("SRT download error:", e)
         return None
 
 WHISPER_LANGUAGES = [
@@ -477,6 +509,17 @@ with gr.Blocks() as interface:
                 extract_playlist_to_csv,
                 inputs=playlist_url,
                 outputs=csv_output
+            )
+
+        with gr.TabItem(".srt Downloader"):
+            gr.Markdown("### Download English subtitles (.srt) from a YouTube video.")
+            srt_url = gr.Textbox(label="YouTube Video URL", placeholder="Paste video URL here")
+            srt_btn = gr.Button("Process")
+            srt_file = gr.File(label="Download SRT")
+            srt_btn.click(
+                download_srt,
+                inputs=srt_url,
+                outputs=srt_file
             )
 
 
