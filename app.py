@@ -13,6 +13,7 @@ import os
 import subprocess
 import glob
 import shutil
+import unicodedata
 
 def process_media(
     model_size, source_lang, upload, model_type,
@@ -31,7 +32,6 @@ def process_media(
 
     temp_path = upload.name
 
-    #-- Check if CUDA is available or not --#
     if model_type == "faster whisper":
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = stable_whisper.load_faster_whisper(model_size, device=device)
@@ -185,7 +185,6 @@ def extract_playlist_to_csv(playlist_url):
         with YoutubeDL(ydl_opts) as ydl:
             result = ydl.extract_info(playlist_url, download=False)
             entries = result.get('entries', [])
-            # Save to a temp file for download
             fd, csv_path = tempfile.mkstemp(suffix=".csv", text=True)
             os.close(fd)
             with open(csv_path, 'w', newline='', encoding='utf-8') as f:
@@ -228,6 +227,54 @@ def download_srt(video_url):
     except Exception as e:
         print("SRT download error:", e)
         return None
+
+def check_youtube_tag(video_url, tag_to_check):
+
+    try:
+        with YoutubeDL({'quiet': True}) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            tags = info.get('tags', [])
+            tag_to_check_norm = tag_to_check.lower()
+            tags_norm = [t.lower() for t in tags]
+            # Exact match, case-insensitive, apostrophe style must match
+            exists = any(tag_to_check_norm == t for t in tags_norm)
+            if exists:
+                return f"✅ Tag '{tag_to_check}' exists in video tags."
+            else:
+                return f"❌ Tag '{tag_to_check}' does NOT exist in video tags.\n\nTags found: {tags if tags else 'None'}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def check_playlist_tags(playlist_url, tag_to_check):
+
+    try:
+        ydl_opts = {
+            'extract_flat': True,
+            'quiet': True,
+            'dump_single_json': True
+        }
+        with YoutubeDL(ydl_opts) as ydl:
+            result = ydl.extract_info(playlist_url, download=False)
+            entries = result.get('entries', [])
+            missing_videos = []
+            tag_to_check_norm = tag_to_check.lower()
+            for video in entries:
+                video_id = video['id']
+                video_url = f'https://www.youtube.com/watch?v={video_id}'
+                with YoutubeDL({'quiet': True}) as ydl_video:
+                    info = ydl_video.extract_info(video_url, download=False)
+                    tags = info.get('tags', [])
+                    tags_norm = [t.lower() for t in tags]
+                    exists = any(tag_to_check_norm == t for t in tags_norm)
+                    if not exists:
+                        missing_videos.append(f"{video.get('title', 'N/A')} ({video_url})")
+            if missing_videos:
+                missing_list = "\n".join(missing_videos)
+                return f"❌ Tag '{tag_to_check}' does NOT exist in the following videos:\n\n{missing_list}"
+            else:
+                return f"✅ Tag '{tag_to_check}' exists in all videos in the playlist."
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 WHISPER_LANGUAGES = [
     ("Afrikaans", "af"),
@@ -520,6 +567,30 @@ with gr.Blocks() as interface:
                 download_srt,
                 inputs=srt_url,
                 outputs=srt_file
+            )
+
+        with gr.TabItem("Tag Checker"):
+            gr.Markdown("### Check if a specific tag exists in a YouTube video's metadata.")
+            tag_url = gr.Textbox(label="YouTube Video URL", placeholder="Paste video URL here")
+            tag_input = gr.Textbox(label="Tag to Check", placeholder="Type the tag (e.g. series:my father's wife)")
+            tag_btn = gr.Button("Process")
+            tag_output = gr.Textbox(label="Tag Check Result", interactive=False)
+            tag_btn.click(
+                check_youtube_tag,
+                inputs=[tag_url, tag_input],
+                outputs=tag_output
+            )
+
+        with gr.TabItem("Playlist Tag Checker"):
+            gr.Markdown("### Check if a specific tag exists in all videos of a YouTube playlist.")
+            playlist_url_tags = gr.Textbox(label="YouTube Playlist URL", placeholder="Paste playlist URL here")
+            tag_input_playlist = gr.Textbox(label="Tag to Check", placeholder="Type the tag (e.g. series:my father's wife)")
+            tag_btn_playlist = gr.Button("Process")
+            tag_output_playlist = gr.Textbox(label="Tag Check Result", interactive=False)
+            tag_btn_playlist.click(
+                check_playlist_tags,
+                inputs=[playlist_url_tags, tag_input_playlist],
+                outputs=tag_output_playlist
             )
 
 
