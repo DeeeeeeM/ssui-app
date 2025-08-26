@@ -19,8 +19,7 @@ def process_media(
     model_size, source_lang, upload, model_type,
     max_chars, max_words, extend_in, extend_out, collapse_gaps,
     max_lines_per_segment, line_penalty, longest_line_char_penalty,
-    initial_prompt=None,  #
-    *args
+    initial_prompt=None, *args
 ):
     if not initial_prompt:
         initial_prompt = None 
@@ -40,8 +39,10 @@ def process_media(
             language=source_lang,
             vad=True,
             regroup=False,
-            no_speech_threshold=0.9,
-            initial_prompt=initial_prompt  # <-- pass here
+            #no_speech_threshold=0.9,
+            #denoiser="demucs",
+            #batch_size=16,
+            initial_prompt=initial_prompt
         )
     else:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -53,10 +54,8 @@ def process_media(
             regroup=False,
             no_speech_threshold=0.9,
             denoiser="demucs",
-            initial_prompt=initial_prompt  # <-- pass here
+            initial_prompt=initial_prompt
         )
-    #, batch_size=16, denoiser="demucs"
-    #result.save_as_json(word_transcription_path) 
 
     # ADVANCED SETTINGS #
     if max_chars or max_words:
@@ -398,6 +397,8 @@ with gr.Blocks() as interface:
     - Improved transcription (GPT-4) (In progress)
     - Text to Speech (In progress)
 
+    UPDATE: The app now includes Youtube metadata extraction features: (title / URL / ID, subtitles, tag checking)
+
     <i><b>NOTE: This app is currently in the process of applying other AI-solutions for other use cases.</b></i>
     """
     )
@@ -437,6 +438,7 @@ with gr.Blocks() as interface:
                         model_size = gr.Dropdown(
                             choices=[
                                 "deepdml/faster-whisper-large-v3-turbo-ct2",
+                                "large-v3-turbo",
                                 "large-v3",
                                 "large-v2",
                                 "large",
@@ -446,7 +448,7 @@ with gr.Blocks() as interface:
                                 "tiny"
                             ],
                             label="Model Size",
-                            value="deepdml/faster-whisper-large-v3-turbo-ct2",
+                            value="large-v2",
                             interactive=True
                         )
                         initial_prompt = gr.Textbox(
@@ -559,7 +561,9 @@ with gr.Blocks() as interface:
             )
 
         with gr.TabItem(".srt Downloader"):
-            gr.Markdown("### Download English subtitles (.srt) from a YouTube video.")
+            gr.Markdown("### Download English subtitles (.srt) from a YouTube video.###")
+
+            
             srt_url = gr.Textbox(label="YouTube Video URL", placeholder="Paste video URL here")
             srt_btn = gr.Button("Process")
             srt_file = gr.File(label="Download SRT")
@@ -582,7 +586,14 @@ with gr.Blocks() as interface:
             )
 
         with gr.TabItem("Playlist Tag Checker"):
-            gr.Markdown("### Check if a specific tag exists in all videos of a YouTube playlist.")
+
+            gr.Markdown(
+                """ 
+                Check if a specific tag exists in all videos of a YouTube playlist.
+
+                <b><i>Note: The process may take longer due to the number of videos being checked.</i></b>
+                """
+            )
             playlist_url_tags = gr.Textbox(label="YouTube Playlist URL", placeholder="Paste playlist URL here")
             tag_input_playlist = gr.Textbox(label="Tag to Check", placeholder="Type the tag (e.g. series:my father's wife)")
             tag_btn_playlist = gr.Button("Process")
