@@ -13,7 +13,6 @@ import os
 import subprocess
 import glob
 import shutil
-import unicodedata
 
 def process_media(
     model_size, source_lang, upload, model_type,
@@ -39,7 +38,6 @@ def process_media(
             language=source_lang,
             vad=True,
             regroup=False,
-            #no_speech_threshold=0.9,
             #denoiser="demucs",
             #batch_size=16,
             initial_prompt=initial_prompt
@@ -112,8 +110,6 @@ def process_media(
     audio_out = temp_path if mime and mime.startswith("audio") else None
     video_out = temp_path if mime and mime.startswith("video") else None
 
-    elapsed = time.time() - start_time 
-    print(f"process_media completed in {elapsed:.2f} seconds")
 
     return audio_out, video_out, transcript_txt, srt_file_path
 
@@ -198,34 +194,67 @@ def extract_playlist_to_csv(playlist_url):
     except Exception as e:
         return None
 
-def download_srt(video_url):
+def download_srt(video_urls):
     try:
-        temp_dir = tempfile.mkdtemp()
-        output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
-        cmd = [
-            "yt-dlp",
-            "--write-subs",
-            "--write-auto-subs",
-            "--sub-lang", "en-US",
-            "--skip-download",
-            "--convert-subs", "srt",
-            "-o", output_template,
-            video_url
-        ]
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print(result.stdout)
-        print(result.stderr)
-        srt_files = glob.glob(os.path.join(temp_dir, "*.srt"))
-        if srt_files:
-            return srt_files[0]
-        else:
-            vtt_files = glob.glob(os.path.join(temp_dir, "*.vtt"))
-            if vtt_files:
-                return vtt_files[0]
+        if not video_urls:
             return None
+
+        if isinstance(video_urls, (list, tuple)):
+            urls = [u.strip() for u in video_urls if u and u.strip()]
+        else:
+            parts = []
+            for line in str(video_urls).splitlines():
+                for part in line.split(','):
+                    parts.append(part.strip())
+            urls = [p for p in parts if p]
+
+        if not urls:
+            return None
+
+        downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+        output_template = os.path.join(downloads_dir, "%(id)s.%(ext)s")
+
+        for url in urls:
+            if not url:
+                continue
+            cmd = [
+                "yt-dlp",
+                "--write-subs",
+                "--write-auto-subs",
+                "--sub-lang", "en-US",
+                "--skip-download",
+                "--convert-subs", "srt",
+                "-o", output_template,
+                url
+            ]
+            try:
+                result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                print(result.stdout)
+                print(result.stderr)
+            except Exception as e:
+                print(f"SRT download error for {url}: {e}")
+
+        srt_files = glob.glob(os.path.join(downloads_dir, "*.srt"))
+        vtt_files = glob.glob(os.path.join(downloads_dir, "*.vtt"))
+        all_files = srt_files + vtt_files
+
+        if not all_files:
+            # No subtitle files were found in Downloads
+            return None, "No subtitle files found in Downloads."
+
+        if len(all_files) == 1:
+            # Single subtitle file found, return its path and a friendly message
+            return all_files[0], f"Downloaded subtitle saved to {downloads_dir}"
+
+        # Multiple subtitle files: create a zip archive and return its path
+        zip_base = os.path.join(downloads_dir, "srt_files")
+        zip_path = shutil.make_archive(zip_base, "zip", downloads_dir)
+        return zip_path, f"Multiple subtitle files archived to {zip_path}"
+
     except Exception as e:
         print("SRT download error:", e)
-        return None
+        # Return no file and a human-friendly message
+        return None, "Saved in Downloads"
 
 def check_youtube_tag(video_url, tag_to_check):
 
@@ -560,17 +589,17 @@ with gr.Blocks() as interface:
                 outputs=csv_output
             )
 
-        with gr.TabItem(".srt Downloader"):
-            gr.Markdown("### Download English subtitles (.srt) from a YouTube video.###")
+        with gr.TabItem("SRT Downloader"):
+            gr.Markdown("### Download English subtitles (.srt) from a YouTube video(s). <i>Separate each URL with a comma or Enter for multiple videos.</i>")
 
-            
             srt_url = gr.Textbox(label="YouTube Video URL", placeholder="Paste video URL here")
             srt_btn = gr.Button("Process")
             srt_file = gr.File(label="Download SRT")
+            srt_status = gr.Textbox(label="Status", interactive=False)
             srt_btn.click(
                 download_srt,
                 inputs=srt_url,
-                outputs=srt_file
+                outputs=[srt_file, srt_status]
             )
 
         with gr.TabItem("Tag Checker"):
@@ -604,5 +633,21 @@ with gr.Blocks() as interface:
                 outputs=tag_output_playlist
             )
 
+    gr.HTML(
+    """
+    <audio id="notify-audio" src="https://www.soundjay.com/buttons/sounds/button-3.mp3"></audio>
+    <script>
+    function playNotify() {
+        var audio = document.getElementById('notify-audio');
+        if (audio) { audio.play(); }
+    }
+        let outputs = document.querySelectorAll("textarea, input[type='file'], video, audio");
+        outputs.forEach(function(output) {
+            output.addEventListener("change", playNotify);
+        });
+    });
+    </script>
+    """
+)
 
 interface.launch(share=True)
