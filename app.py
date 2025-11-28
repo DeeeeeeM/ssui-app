@@ -170,13 +170,16 @@ def segments2blocks(segments, max_lines_per_segment, line_penalty, longest_line_
         for i, s in enumerate(segments)
     )
 
-def extract_playlist_to_csv(playlist_url):
+def extract_playlist_to_csv(playlist_url, cookies_path=None):
     ydl_opts = {
         'extract_flat': True,
         'quiet': True,
         'dump_single_json': True
     }
     try:
+        cookies_path = _normalize_file_path(cookies_path)
+        if cookies_path:
+            ydl_opts['cookies'] = cookies_path
         with YoutubeDL(ydl_opts) as ydl:
             result = ydl.extract_info(playlist_url, download=False)
             entries = result.get('entries', [])
@@ -194,10 +197,10 @@ def extract_playlist_to_csv(playlist_url):
     except Exception as e:
         return None
 
-def download_srt(video_urls):
+def download_srt(video_urls, cookies_path=None):
     try:
         if not video_urls:
-            return None
+            return None, "No URL provided"
 
         if isinstance(video_urls, (list, tuple)):
             urls = [u.strip() for u in video_urls if u and u.strip()]
@@ -209,57 +212,126 @@ def download_srt(video_urls):
             urls = [p for p in parts if p]
 
         if not urls:
-            return None
+            return None, "No URL provided"
 
         downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
         output_template = os.path.join(downloads_dir, "%(id)s.%(ext)s")
 
-        for url in urls:
-            if not url:
-                continue
-            cmd = [
-                "yt-dlp",
-                "--write-subs",
-                "--write-auto-subs",
-                "--sub-lang", "en-US",
-                "--skip-download",
-                "--convert-subs", "srt",
-                "-o", output_template,
-                url
-            ]
-            try:
-                result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-                print(result.stdout)
-                print(result.stderr)
-            except Exception as e:
-                print(f"SRT download error for {url}: {e}")
+        errors = []
+        cookies_path = _normalize_file_path(cookies_path)
+        try:
+            if shutil.which("yt-dlp"):
+                for url in urls:
+                    if not url:
+                        continue
+                    cmd = [
+                        "yt-dlp",
+                        "--write-subs",
+                        "--write-auto-subs",
+                        "--sub-lang", "en-US",
+                        "--skip-download",
+                        "--convert-subs", "srt",
+                        "-o", output_template,
+                        # pass cookies if provided
+                        url
+                    ]
+                    if cookies_path:
+                        cmd.extend(["--cookies", cookies_path])
+                    try:
+                        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                        print(result.stdout)
+                        print(result.stderr)
+                    except Exception as e:
+                        errors.append(f"{url}: {e}")
+            else:
+                ydl_opts = {
+                    'writesubtitles': True,
+                    'writeautomaticsub': True,
+                    'subtitleslangs': ['en-US', 'en'],
+                    'skip_download': True,
+                    'outtmpl': output_template,
+                    'quiet': True,
+                    'subtitlesformat': 'srt'
+                }
+                if cookies_path:
+                    ydl_opts['cookies'] = cookies_path
+                try:
+                    with YoutubeDL(ydl_opts) as ydl:
+                        ydl.download(urls)
+                except Exception as e:
+                    errors.append(str(e))
+        except Exception as e:
+            errors.append(str(e))
 
         srt_files = glob.glob(os.path.join(downloads_dir, "*.srt"))
         vtt_files = glob.glob(os.path.join(downloads_dir, "*.vtt"))
         all_files = srt_files + vtt_files
 
         if not all_files:
-            # No subtitle files were found in Downloads
-            return None, "No subtitle files found in Downloads."
+            if any("HTTP Error 429" in e or "429" in e for e in errors):
+                return None, "Error: HTTP 429 Too Many Requests from YouTube. Try again later."
+            err_msg = "; ".join(errors) if errors else "No subtitle files found in Downloads."
+            return None, f"SRT download error: {err_msg}"
 
-        if len(all_files) == 1:
-            # Single subtitle file found, return its path and a friendly message
-            return all_files[0], f"Downloaded subtitle saved to {downloads_dir}"
+        temp_dir = tempfile.mkdtemp(prefix="ssui_srt_")
+        copied_paths = []
+        copy_errors = []
+        for fpath in all_files:
+            try:
+                dest = os.path.join(temp_dir, os.path.basename(fpath))
+                shutil.copy2(fpath, dest)
+                copied_paths.append(dest)
+            except Exception as e:
+                copy_errors.append(f"{fpath}: {e}")
 
-        # Multiple subtitle files: create a zip archive and return its path
-        zip_base = os.path.join(downloads_dir, "srt_files")
-        zip_path = shutil.make_archive(zip_base, "zip", downloads_dir)
+        if not copied_paths:
+            msg = "; ".join(copy_errors) if copy_errors else "Failed to copy subtitle files."
+            return None, f"SRT copy error: {msg}"
+
+        if len(copied_paths) == 1:
+            return copied_paths[0], f"Downloaded subtitle copied to {copied_paths[0]}"
+
+        zip_base = os.path.join(temp_dir, "srt_files")
+        zip_path = shutil.make_archive(zip_base, "zip", temp_dir)
         return zip_path, f"Multiple subtitle files archived to {zip_path}"
 
     except Exception as e:
         print("SRT download error:", e)
-        # Return no file and a human-friendly message
         return None, "Saved in Downloads"
 
-def check_youtube_tag(video_url, tag_to_check):
+def _normalize_file_path(file_input):
+    """Normalize a Gradio file return value (or path) to a string path for yt-dlp cookies.
+    Supports strings, file-like objects, and Gradio dict-style file objects.
+    """
+    if not file_input:
+        return None
+    # Direct string path
+    if isinstance(file_input, str):
+        return file_input
+    # Gradio returns a dict sometimes with a 'name' or 'tmp_path' field
+    if isinstance(file_input, dict):
+        for k in ("name", "tmp_path", "tempfile", "file_path", "path"):
+            if k in file_input and file_input[k]:
+                return file_input[k]
+        return None
+    # File-like objects often have a .name attribute
+    try:
+        return getattr(file_input, "name", None)
+    except Exception:
+        return None
+
+
+def check_youtube_tag(video_url, tag_to_check, cookies_path=None):
 
     try:
-        with YoutubeDL({'quiet': True}) as ydl:
+        cookies_path = _normalize_file_path(cookies_path)
+        ydl_opts = {"quiet": True}
+        if cookies_path:
+            ydl_opts["cookies"] = cookies_path
+        # Use a browser-like User-Agent by default to reduce SABR/format issues
+        ydl_opts.setdefault("http_headers", {})
+        ydl_opts["http_headers"].setdefault("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
             tags = info.get('tags', [])
             tag_to_check_norm = tag_to_check.lower()
@@ -267,42 +339,107 @@ def check_youtube_tag(video_url, tag_to_check):
             # Exact match, case-insensitive, apostrophe style must match
             exists = any(tag_to_check_norm == t for t in tags_norm)
             if exists:
-                return f"✅ Tag '{tag_to_check}' exists in video tags."
+                return f"Tag/s '{tag_to_check}' EXISTS in video"
             else:
-                return f"❌ Tag '{tag_to_check}' does NOT exist in video tags.\n\nTags found: {tags if tags else 'None'}"
+                return f"Tag/s '{tag_to_check}' DOES NOT EXIST in video.\n\nTags found: {tags if tags else 'None'}"
     except Exception as e:
-        return f"Error: {str(e)}"
+        err = str(e)
+        if 'Sign in to confirm your age' in err or ('Sign in' in err and 'age' in err):
+            return f"Error checking {video_url}: This video is age-restricted and requires authentication (provide a cookies.txt file)."
+        if 'HTTP Error 403' in err or '403' in err:
+            return f"Error checking {video_url}: HTTP 403 Forbidden - try supplying a cookies file or updating yt-dlp with `yt-dlp -U`."
+        return f"Error checking {video_url}: {err}"
 
-def check_playlist_tags(playlist_url, tag_to_check):
-
+def check_playlist_tags(playlist_url, tag_to_check, cookies_path=None):
+    import tempfile, csv
     try:
+        cookies_path = _normalize_file_path(cookies_path)
         ydl_opts = {
             'extract_flat': True,
             'quiet': True,
             'dump_single_json': True
         }
+        if cookies_path:
+            ydl_opts['cookies'] = cookies_path
+        # Use browser user agent
+        ydl_opts.setdefault("http_headers", {})
+        ydl_opts["http_headers"].setdefault("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         with YoutubeDL(ydl_opts) as ydl:
             result = ydl.extract_info(playlist_url, download=False)
             entries = result.get('entries', [])
-            missing_videos = []
+            rows = []
             tag_to_check_norm = tag_to_check.lower()
             for video in entries:
-                video_id = video['id']
+                video_id = video.get('id')
+                if not video_id:
+                    title = video.get('title', 'N/A')
+                    rows.append([title, '', 'No video ID in playlist entry'])
+                    continue
                 video_url = f'https://www.youtube.com/watch?v={video_id}'
-                with YoutubeDL({'quiet': True}) as ydl_video:
-                    info = ydl_video.extract_info(video_url, download=False)
-                    tags = info.get('tags', [])
-                    tags_norm = [t.lower() for t in tags]
-                    exists = any(tag_to_check_norm == t for t in tags_norm)
-                    if not exists:
-                        missing_videos.append(f"{video.get('title', 'N/A')} ({video_url})")
-            if missing_videos:
-                missing_list = "\n".join(missing_videos)
-                return f"❌ Tag '{tag_to_check}' does NOT exist in the following videos:\n\n{missing_list}"
-            else:
-                return f"✅ Tag '{tag_to_check}' exists in all videos in the playlist."
+                title = video.get('title', 'N/A')
+                video_opts = {'quiet': True}
+                if cookies_path:
+                    video_opts['cookies'] = cookies_path
+                # Add a user agent
+                video_opts.setdefault("http_headers", {})
+                video_opts["http_headers"].setdefault("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                try:
+                    with YoutubeDL(video_opts) as ydl_video:
+                        info = ydl_video.extract_info(video_url, download=False)
+                        # Detect unlisted flag if available
+                        is_unlisted = info.get('is_unlisted') if isinstance(info, dict) else False
+                        # Detect private, membership or age-limit fields if present
+                        is_private = info.get('is_private') if isinstance(info, dict) and 'is_private' in info else False
+                        age_limit = info.get('age_limit') if isinstance(info, dict) and 'age_limit' in info else 0
+                        # Tags processing
+                        tags = info.get('tags', []) or []
+                        tags_norm = [t.lower() for t in tags]
+                        exists = any(tag_to_check_norm == t for t in tags_norm)
+                        # Build note components
+                        parts = []
+                        if is_unlisted:
+                            parts.append('Unlisted')
+                        if is_private:
+                            parts.append('Private')
+                        elif age_limit and int(age_limit) >= 18:
+                            parts.append('Age-restricted')
+                        if exists:
+                            parts.append(f"Tag/s '{tag_to_check}' exists in video")
+                        else:
+                            parts.append('Tag/s does not exist in video')
+                        note = '; '.join(parts)
+                        rows.append([title, video_url, note])
+                except Exception as e:
+                    err = str(e)
+                    err_lower = err.lower()
+                    if 'sign in to confirm your age' in err_lower or ('age' in err_lower and 'sign in' in err_lower):
+                        note = 'Age-restricted - cookies required or signed-in account needed'
+                    elif 'private' in err_lower and 'video' in err_lower:
+                        note = 'Private video - access denied'
+                    elif 'video unavailable' in err_lower or 'not available' in err_lower or 'removed' in err_lower:
+                        note = 'Video unavailable or removed'
+                    elif '403' in err_lower or 'forbidden' in err_lower:
+                        note = 'HTTP Error 403 Forbidden - cookies may be required or access denied'
+                    else:
+                        note = f"Could not check video: {err}"
+                    rows.append([title, video_url, note])
+            # Write to temp CSV
+            fd, csv_path = tempfile.mkstemp(suffix=".csv", text=True)
+            os.close(fd)
+            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Title", "URL", "Notes"])
+                writer.writerows(rows)
+            return csv_path
     except Exception as e:
-        return f"Error: {str(e)}"
+        # Write error to CSV
+        fd, csv_path = tempfile.mkstemp(suffix=".csv", text=True)
+        os.close(fd)
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Title", "URL", "Notes"])
+            writer.writerow(["Error", "", str(e)])
+        return csv_path
 
 WHISPER_LANGUAGES = [
     ("Afrikaans", "af"),
@@ -581,11 +718,12 @@ with gr.Blocks() as interface:
         with gr.TabItem("Youtube playlist extractor"):
             gr.Markdown("### Extract YT Title, URL, and ID from a YouTube playlist and download as CSV.")
             playlist_url = gr.Textbox(label="YouTube Playlist URL", placeholder="Paste playlist URL here")
+            cookie_file_extract = gr.File(label="YouTube Cookies File (optional)", file_types=None, interactive=True)
             process_btn = gr.Button("Process")
             csv_output = gr.File(label="Download CSV")
             process_btn.click(
                 extract_playlist_to_csv,
-                inputs=playlist_url,
+                inputs=[playlist_url, cookie_file_extract],
                 outputs=csv_output
             )
 
@@ -593,24 +731,28 @@ with gr.Blocks() as interface:
             gr.Markdown("### Download English subtitles (.srt) from a YouTube video(s). <i>Separate each URL with a comma or Enter for multiple videos.</i>")
 
             srt_url = gr.Textbox(label="YouTube Video URL", placeholder="Paste video URL here")
+            cookie_file_srt = gr.File(label="YouTube Cookies File (optional)", file_types=None, interactive=True)
             srt_btn = gr.Button("Process")
             srt_file = gr.File(label="Download SRT")
             srt_status = gr.Textbox(label="Status", interactive=False)
             srt_btn.click(
                 download_srt,
-                inputs=srt_url,
+                inputs=[srt_url, cookie_file_srt],
                 outputs=[srt_file, srt_status]
             )
 
         with gr.TabItem("Tag Checker"):
             gr.Markdown("### Check if a specific tag exists in a YouTube video's metadata.")
+            gr.Markdown("*Tip: If a video is age-restricted or otherwise requires authentication, export cookies from your browser (cookies.txt) and upload it below.*")
+            gr.Markdown("*How to export cookies: Install the 'Get cookies.txt' extension in your browser, sign into YouTube in the browser, then export using the extension and upload the cookies file here.*")
             tag_url = gr.Textbox(label="YouTube Video URL", placeholder="Paste video URL here")
             tag_input = gr.Textbox(label="Tag to Check", placeholder="Type the tag (e.g. series:my father's wife)")
+            cookie_file_tag = gr.File(label="YouTube Cookies File (optional)", file_types=None, interactive=True)
             tag_btn = gr.Button("Process")
             tag_output = gr.Textbox(label="Tag Check Result", interactive=False)
             tag_btn.click(
                 check_youtube_tag,
-                inputs=[tag_url, tag_input],
+                inputs=[tag_url, tag_input, cookie_file_tag],
                 outputs=tag_output
             )
 
@@ -623,13 +765,16 @@ with gr.Blocks() as interface:
                 <b><i>Note: The process may take longer due to the number of videos being checked.</i></b>
                 """
             )
+            gr.Markdown("*Tip: If some videos are age-restricted, upload a cookies.txt file so the app can check them.*")
+            gr.Markdown("*How to export cookies: Install the 'Get cookies.txt' extension in your browser, sign into YouTube in the browser, then export using the extension and upload the cookies file here.*")
             playlist_url_tags = gr.Textbox(label="YouTube Playlist URL", placeholder="Paste playlist URL here")
             tag_input_playlist = gr.Textbox(label="Tag to Check", placeholder="Type the tag (e.g. series:my father's wife)")
+            cookie_file_playlist = gr.File(label="YouTube Cookies File (optional)", file_types=None, interactive=True)
             tag_btn_playlist = gr.Button("Process")
-            tag_output_playlist = gr.Textbox(label="Tag Check Result", interactive=False)
+            tag_output_playlist = gr.File(label="Download Tag Check CSV", interactive=False)
             tag_btn_playlist.click(
                 check_playlist_tags,
-                inputs=[playlist_url_tags, tag_input_playlist],
+                inputs=[playlist_url_tags, tag_input_playlist, cookie_file_playlist],
                 outputs=tag_output_playlist
             )
 
