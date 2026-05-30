@@ -1,0 +1,225 @@
+import gradio as gr
+import yt_dlp
+import csv
+import io
+import tempfile
+import os
+import threading
+
+cancel_flag = threading.Event()
+
+
+def extract_playlist(playlist_url: str, cookies_file: str | None, progress=gr.Progress()):
+    cancel_flag.clear()
+
+    if not playlist_url.strip():
+        return None, "⚠️  Please enter a playlist URL.", ""
+
+    progress(0, desc="Fetching playlist info…")
+
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": "in_playlist",   # fast — no downloading, just metadata
+        "skip_download": True,
+        "noplaylist": False,
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+        },
+    }
+    if cookies_file:
+        ydl_opts["cookiefile"] = cookies_file
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(playlist_url.strip(), download=False)
+    except Exception as e:
+        return None, f"❌  Failed to fetch playlist: {e}", ""
+
+    if not info:
+        return None, "❌  No info returned. Check the URL.", ""
+
+    entries = info.get("entries", [])
+    if not entries:
+        # single video URL passed — wrap it
+        entries = [info]
+
+    playlist_title = info.get("title", "playlist")
+
+    rows = []
+    log_lines = [f"📋  Playlist: {playlist_title}", f"🔢  {len(entries)} video(s) found\n"]
+
+    for i, entry in enumerate(entries):
+        if cancel_flag.is_set():
+            log_lines.append("🛑  Cancelled.")
+            break
+        if not entry:
+            continue
+
+        progress((i + 1) / len(entries), desc=f"[{i+1}/{len(entries)}] collecting…")
+
+        video_id = entry.get("id", "")
+        url = entry.get("url") or entry.get("webpage_url") or (
+            f"https://www.youtube.com/watch?v={video_id}" if video_id else ""
+        )
+        title = entry.get("title", "")
+        uploader = entry.get("uploader") or entry.get("channel", "")
+        duration = entry.get("duration")
+        duration_str = ""
+        if duration:
+            m, s = divmod(int(duration), 60)
+            h, m = divmod(m, 60)
+            duration_str = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+        rows.append({
+            "index": i + 1,
+            "title": title,
+            "url": url,
+            "video_id": video_id,
+            "uploader": uploader,
+            "duration": duration_str,
+        })
+        log_lines.append(f"   [{i+1:>3}]  {title or url}")
+
+    if not rows:
+        return None, "⚠️  No entries extracted.", "\n".join(log_lines)
+
+    # write CSV
+    tmp_dir = tempfile.mkdtemp(prefix="pl_csv_")
+    safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in playlist_title)[:60]
+    csv_path = os.path.join(tmp_dir, f"{safe_name}.csv")
+
+    fieldnames = ["index", "title", "url", "video_id", "uploader", "duration"]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    summary = f"✅  {len(rows)} links saved to {safe_name}.csv"
+    return csv_path, summary, "\n".join(log_lines)
+
+
+def cancel():
+    cancel_flag.set()
+    return "🛑 Cancelling…"
+
+
+# ── CSS ────────────────────────────────────────────────────────────────────────
+CSS = """
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap');
+
+:root {
+    --bg: #080a10;
+    --surface: #0f1218;
+    --surface2: #181c26;
+    --border: #252a38;
+    --accent: #00e5ff;
+    --accent2: #d4ff00;
+    --text: #dde2ee;
+    --muted: #5a6278;
+    --danger: #ff4d6d;
+    --radius: 10px;
+}
+
+body, .gradio-container { background: var(--bg) !important; color: var(--text) !important; font-family: 'Syne', sans-serif !important; }
+
+#header { text-align: center; padding: 2.2rem 1rem 1.2rem; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
+#header h1 { font-size: 2.2rem; font-weight: 800; letter-spacing: -1px; color: var(--accent); margin: 0 0 0.3rem; text-shadow: 0 0 28px rgba(0,229,255,0.3); }
+#header p { color: var(--muted); font-family: 'DM Mono', monospace; font-size: 0.82rem; margin: 0; }
+
+.panel { background: var(--surface) !important; border: 1px solid var(--border) !important; border-radius: var(--radius) !important; padding: 1.2rem !important; }
+
+label { color: var(--text) !important; font-weight: 600 !important; font-size: 0.8rem !important; text-transform: uppercase; letter-spacing: 0.07em; }
+
+textarea, input[type="text"] {
+    background: var(--surface2) !important; border: 1px solid var(--border) !important;
+    border-radius: 6px !important; color: var(--text) !important;
+    font-family: 'DM Mono', monospace !important; font-size: 0.83rem !important;
+}
+textarea:focus, input:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 2px rgba(0,229,255,0.15) !important; outline: none !important; }
+
+button.primary, .gr-button-primary {
+    background: var(--accent) !important; color: #080a10 !important;
+    font-family: 'Syne', sans-serif !important; font-weight: 700 !important;
+    border: none !important; border-radius: 6px !important;
+    padding: 0.7rem 1.8rem !important; letter-spacing: 0.04em;
+    transition: transform 0.15s, box-shadow 0.15s !important;
+}
+button.primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,229,255,0.35) !important; }
+
+button.secondary, .gr-button-secondary {
+    background: transparent !important; color: var(--danger) !important;
+    border: 1px solid var(--danger) !important;
+    font-family: 'Syne', sans-serif !important; font-weight: 600 !important;
+    border-radius: 6px !important; transition: background 0.15s !important;
+}
+button.secondary:hover { background: rgba(255,77,109,0.1) !important; }
+
+#log-box textarea {
+    font-family: 'DM Mono', monospace !important; font-size: 0.75rem !important;
+    line-height: 1.65 !important; background: #080a10 !important;
+    color: #7dd3fc !important; border: 1px solid var(--border) !important;
+}
+
+#status-box textarea {
+    background: var(--surface) !important; color: var(--accent2) !important;
+    font-family: 'DM Mono', monospace !important; font-size: 0.83rem !important;
+    border: 1px solid var(--border) !important;
+}
+"""
+
+# ── UI ─────────────────────────────────────────────────────────────────────────
+with gr.Blocks(css=CSS, title="Playlist → CSV") as demo:
+
+    gr.HTML("""
+    <div id="header">
+        <h1>📋 PLAYLIST → CSV</h1>
+        <p>extract every video link from a youtube playlist into a csv file</p>
+    </div>
+    """)
+
+    with gr.Row():
+        with gr.Column(scale=2, elem_classes="panel"):
+            gr.Markdown("### 🔗 Playlist Input")
+            url_box = gr.Textbox(
+                label="YouTube Playlist URL",
+                placeholder="https://www.youtube.com/playlist?list=PL...",
+                lines=2,
+            )
+
+            with gr.Accordion("⚙️  Options", open=False):
+                gr.Markdown(
+                    "<small style='color:#5a6278;font-family:DM Mono,monospace'>"
+                    "If you get 429 errors, export cookies from your browser "
+                    "using the <b>Get cookies.txt LOCALLY</b> extension and upload below."
+                    "</small>"
+                )
+                cookies_file = gr.File(
+                    label="cookies.txt (optional)",
+                    file_types=[".txt"],
+                    type="filepath",
+                )
+
+            with gr.Row():
+                run_btn = gr.Button("📥  Extract Links", variant="primary", scale=3)
+                cancel_btn = gr.Button("✕  Cancel", variant="secondary", scale=1)
+
+        with gr.Column(scale=2, elem_classes="panel"):
+            gr.Markdown("### 📦 Output")
+            status_box = gr.Textbox(label="Status", interactive=False, lines=2, elem_id="status-box")
+            csv_out = gr.File(label="Download CSV", interactive=False)
+            log_box = gr.Textbox(label="Log", interactive=False, lines=18, max_lines=30, elem_id="log-box")
+
+    run_btn.click(
+        fn=extract_playlist,
+        inputs=[url_box, cookies_file],
+        outputs=[csv_out, status_box, log_box],
+    )
+    cancel_btn.click(fn=cancel, outputs=[status_box])
+
+if __name__ == "__main__":
+    demo.launch(share=True)
