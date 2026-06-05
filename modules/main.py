@@ -9,6 +9,42 @@ import torch
 import stable_whisper
 from stable_whisper.text_output import result_to_any
 
+def _is_cuda_oom(exception):
+    return isinstance(exception, RuntimeError) and "out of memory" in str(exception).lower()
+
+
+def _load_and_transcribe(model_type, model_size, temp_path, source_lang, initial_prompt):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda":
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+    def load_model_for_branch(device_name):
+        if model_type == "faster whisper":
+            return stable_whisper.load_faster_whisper(model_size, device=device_name)
+        else:
+            return stable_whisper.load_model(model_size, device=device_name)
+
+    def transcribe_with_model(model, device_name):
+        kwargs = {
+            "language": source_lang,
+            "vad": True,
+            "regroup": False,
+        }
+        if model_type in ["faster whisper", "whisper"] and initial_prompt:
+            kwargs["initial_prompt"] = initial_prompt
+        return model.transcribe(temp_path, **kwargs)
+
+    try:
+        model = load_model_for_branch(device)
+        return transcribe_with_model(model, device), device
+    except RuntimeError as ex:
+        if _is_cuda_oom(ex) and device == "cuda":
+            torch.cuda.empty_cache()
+            cpu_model = load_model_for_branch("cpu")
+            return transcribe_with_model(cpu_model, "cpu"), "cpu"
+        raise
+
+
 def process_media(
     model_size, source_lang, upload, model_type,
     max_chars, max_words, extend_in, extend_out, collapse_gaps,
@@ -24,27 +60,12 @@ def process_media(
 
     temp_path = upload.name
 
-    if model_type == "faster whisper":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = stable_whisper.load_faster_whisper(model_size, device=device)
-        result = model.transcribe(
-            temp_path,
-            language=source_lang,
-            vad=True,
-            regroup=False,
-            #batch_size=16,
-            initial_prompt=initial_prompt)
-    else:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = stable_whisper.load_model(model_size, device=device)
-        result = model.transcribe(
-            temp_path,
-            language=source_lang,
-            vad=True,
-            regroup=False,
-            #no_speech_threshold=0.9,
-            initial_prompt=initial_prompt
-        )
+    result, used_device = _load_and_transcribe(
+        model_type, model_size, temp_path, source_lang, initial_prompt
+    )
+
+    if used_device == "cpu":
+        print("CUDA OOM fallback: transcription retried on CPU")
 
     # ADVANCED SETTINGS #
     if max_chars or max_words:

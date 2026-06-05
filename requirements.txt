@@ -1,9 +1,17 @@
 gradio>=3.0.0
 stable-ts
 stable-ts[fw]
+transformers
+huggingface-hub
+optimum
 demucs
 numpy>=1.24,<2.3
 sympy==1.13.1
 chardet
 yt-dlp
 ffmpeg
+# Translation services (optional - install as needed)
+google-trans-new
+deepl
+openai
+requests
